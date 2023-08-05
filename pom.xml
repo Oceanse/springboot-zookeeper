@@ -17,7 +17,7 @@
 
     <modules>
         <module>springboot-curator</module>
-        <module>native-curator</module>
+        <module>native-zookeeper</module>
     </modules>
 
     <properties>

@@ -6,5 +6,5 @@ curator:
   connectString: localhost:2181,localhost:2182,localhost:2183 # zookeeper 地址
   retryCount: 1 # 重试次数
   elapsedTimeMs: 2000 # 重试间隔时间
-  sessionTimeoutMs: 60000 # session超时时间
+  sessionTimeoutMs: 60000 # zk会通过心跳检测机制来维持会话的有效性，一旦在当前指定的时间内没有完成心跳检测，则视为当前会话已经失效
   connectionTimeoutMs: 10000 # 连接超时时间

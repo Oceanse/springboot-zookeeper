@@ -12,7 +12,8 @@ import java.nio.charset.StandardCharsets;
 
 
 /**
- * zookeeper提供的原生API操作过于烦琐，curator框架是对zookeeper提供的原生API进行了封装，提供了更高级的API接口，使客户端程序员使用zookeeper更加容易及高效。
+ * zookeeper提供的原生API操作过于烦琐，curator框架是对zookeeper提供的原生API进行了封装，
+ * 提供了更高级的API接口，使客户端程序员使用zookeeper更加容易及高效。
  * 官网：http://curator.apache.org/
  */
 @RunWith(SpringRunner.class)
