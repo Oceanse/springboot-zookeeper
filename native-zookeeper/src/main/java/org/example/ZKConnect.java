@@ -20,21 +20,37 @@ public class ZKConnect {
     static CountDownLatch countDownLatch2 = new CountDownLatch(1);
 
     /**
-     * 测试连接
-     *
-     * @param args
-     * @throws IOException
+     * 客户端和zk服务端链接是一个异步的过程，构造函数会立刻返回，不会阻塞当前线程，而是继续执行后续代码,实际的连接会在后台进行
+     * 由于提供了 null 作为 Watcher，因此不会有任何 Watcher 回调。
      * @throws InterruptedException
+     * @throws IOException
      */
-    public static void main(String[] args) throws InterruptedException, IOException {
+    @Test
+    public void testAsyncConnect() throws InterruptedException, IOException {
+
+        zk = new ZooKeeper(zkServer, timeout, null);
+        System.out.println("连接状态：" + zk.getState());//这里可能还没有连上服务器
+        Thread.sleep(5000);
+        System.out.println("连接状态2：" + zk.getState());//经过了timeout，应该能连上服务器
+    }
+
+
+    /**
+     * 如果没有为特定的 ZNode 设置监视器，那么 Watcher 的 process 方法只会因为会话状态的变化而被调用
+     * 这包括以下几种情况：
+     * 会话建立：当 ZooKeeper 客户端成功连接到 ZooKeeper 服务器并建立会话时，process 方法会被调用。
+     * 会话状态变化：当会话的状态发生变化时（例如从 Connecting 变为 SyncConnected)，process 方法会被调用。
+     *
+     * @throws IOException
+     */
+    @Test
+    public void connect() throws IOException, InterruptedException {
         zk = new ZooKeeper(zkServer, timeout, new Watcher() {
             @Override
             public void process(final WatchedEvent event) {
-                Event.EventType type = event.getType();
                 Event.KeeperState state = event.getState();
-                System.out.println("type = " + type);
-                System.out.println("state = " + state);
                 while (true) {
+                    System.out.println("state = " + state);//当会话的状态发生变化时（例如从 Connecting 变为 SyncConnected)，process 方法会被调用
                     if (zk.getState() == ZooKeeper.States.CONNECTED) {
                         System.out.println("成功连上服务器");
                         countDownLatch.countDown();
@@ -54,53 +70,6 @@ public class ZKConnect {
         System.out.println("连接状态2：" + zk.getState());
     }
 
-    @Test
-    public void testAsyncConnect() throws InterruptedException, IOException {
-        /**
-         * 客户端和zk服务端链接是一个异步的过程,构造函数会立刻返回，不会等待与服务器连接成功后返回，实际的连接会在后台进行，也就是构造函数返回后可能连接还没完成；
-         * 为了捕获与服务器连接状态的变化，可以传毒一个watcher对象；它将会在连接状态发生变化时候被回调
-         * zkServer:连接服务器的ip字符串，可以是一个ip，也可以是多个ip,一个ip代表单机，多个ip代表集群
-         * timeout: 连接超时时间
-         * watcher: 通知事件，如果有对应的事件触发，则会收到一个通知;如果不需要，那就设置为null
-         */
-        zk = new ZooKeeper(zkServer, timeout, null);
-        System.out.println("连接状态：" + zk.getState());//这里可能还没有连上服务器
-        Thread.sleep(5000);
-        System.out.println("连接状态2：" + zk.getState());//经过了timeout，应该能连上服务器
-    }
-
-
-    /**
-     * 客户端和zk服务端链接是一个异步的过程，构造函数会立刻返回，不会等待与服务器连接成功后返回；
-     * 所以如果@Before方法只是 zk = new ZooKeeper(zkServer, timeout， new Watcher() {})，那么@Before方法结束后并不一定保证已成功连上服务器
-     *
-     * @throws IOException
-     */
-    @Before
-    public void connect() throws IOException, InterruptedException {
-        zk = new ZooKeeper(zkServer, timeout, new Watcher() {
-            @Override
-            public void process(final WatchedEvent event) {
-                while (true) {
-                    if (zk.getState() == ZooKeeper.States.CONNECTED) {
-                        countDownLatch.countDown();
-                        break;
-                    }
-                    try {
-                        Thread.sleep(1000);
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-
-            }
-        });
-        System.out.println("连接状态：" + zk.getState());
-        countDownLatch.await();
-        ;//因为上面连接过程是异步过程，所以需要通过计数锁保证连接成功
-        System.out.println("连接状态2：" + zk.getState());
-    }
-
 
     /**
      * 创建同步临时节点,
@@ -117,7 +86,10 @@ public class ZKConnect {
      *             CREATOR_ALL_ACL：创建该znode的连接拥有所有权限
      *             READ_ACL_UNSAFE：所有的客户端都可读
      */
-    public void createSyncTempNode(String path, byte[] data, List<ACL> acl) throws InterruptedException, KeeperException {
+    public void createSyncTempNode(String path, byte[] data, List<ACL> acl) throws InterruptedException, KeeperException, IOException {
+        zk = new ZooKeeper(zkServer, timeout, null);
+        Thread.sleep(5000);
+
         String result = zk.create(path, data, acl, CreateMode.EPHEMERAL);
         System.out.println("创建节点 " + result + " 成功");
     }
@@ -141,15 +113,21 @@ public class ZKConnect {
     /**
      * 创建异步临时节点
      * 异步调用会在命令发送到Zookeeper服务器之前，就返回继续执行之后的代码，节点创建过程（包括网络通信和服务端的节点创建过程）是异步的
-     * <p>
-     * 同步调用中，需要处理异常;
-     * 异步调用中，方法本身不会抛出异常的，所有的异常都会在回调函数中通过Result Code 来体现。
+     *
+     *  processResult 方法将在以下情况下被调用：
+     * 1 异步创建节点成功：
+     * 当节点成功创建时，processResult 方法会被调用，其中 resultCode 的值将是 KeeperException.Code.OK.intValue()，即 0。
+     * 2 异步创建节点失败：
+     * 如果创建节点操作失败，例如因为节点已经存在或客户端与服务器之间的连接断开等原因，processResult 方法同样会被调用，此时 resultCode 将包含一个错误码。
      *
      * @param path
      * @param data
      * @param acl
      */
-    public void createAsyncTempNode(String path, byte[] data, List<ACL> acl) throws InterruptedException, KeeperException {
+    public void createAsyncTempNode(String path, byte[] data, List<ACL> acl) throws InterruptedException, KeeperException, IOException {
+        zk = new ZooKeeper(zkServer, timeout, null);
+        Thread.sleep(5000);
+
         AsyncCallback.StringCallback callback = new AsyncCallback.StringCallback() {
             /**
              *
@@ -200,11 +178,25 @@ public class ZKConnect {
 
     /**
      * 异步方式获取节点数据
+     * processResult 方法的调用时机
+     * 1 成功获取节点数据：
+     * 当节点数据成功获取时，processResult 方法被调用，其中
+     * i 的值为 KeeperException.Code.OK.intValue()，即 0。
+     * nodePath 参数是获取数据的节点路径。
+     * bytes 参数是节点的数据。
+     * ctx 参数是您传递给 zk.getData 方法的上下文对象。
+     * stat 参数是节点的状态信息。
+     *
+     * 2获取节点数据失败：
+     * 如果获取节点数据失败，processResult 方法同样被调用，其中 i 将包含一个错误码。
      *
      * @throws IOException
      */
     @Test
-    public void testGetNodeData() throws IOException {
+    public void testGetNodeData() throws IOException, InterruptedException {
+        zk = new ZooKeeper(zkServer, timeout, null);
+        Thread.sleep(5000);
+
         AsyncCallback.DataCallback dataCallback = new AsyncCallback.DataCallback() {
             @Override
             public void processResult(int i, String nodePath, Object ctx, byte[] bytes, Stat stat) {
@@ -216,7 +208,7 @@ public class ZKConnect {
 
             }
         };
-        zk.getData("/testEphemeralNode2", true, dataCallback, "异步获取节点的数据值");
+        zk.getData("/testEphemeralNode2", false, dataCallback, "异步获取节点的数据值");
         for (int i = 0; i < 3; i++) {
             System.out.println("节点数据获取是一步过程节点数据获取到之前，也可以继续做其他事情");
         }

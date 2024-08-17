@@ -2,14 +2,9 @@ package org.example;
 
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.cache.*;
-import org.apache.zookeeper.CreateMode;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.junit4.SpringRunner;
-
-import java.nio.charset.StandardCharsets;
 
 
 /**
@@ -17,7 +12,6 @@ import java.nio.charset.StandardCharsets;
  * 提供了更高级的API接口，使客户端程序员使用zookeeper更加容易及高效。
  * 官网：http://curator.apache.org/
  */
-@RunWith(SpringRunner.class)
 @SpringBootTest(classes = BootApplication.class)
 public class ListenerWithCurator {
     @Autowired
@@ -25,9 +19,17 @@ public class ListenerWithCurator {
 
 
     /**
-     * NodeCache: 对一个指定节点进行监听，监听事件包括指定路径的增删改操作
+     * odeCache 提供了一个简单的方式来自动管理节点的缓存，并在节点数据发生变化时通知您的应用程序。
+     *
+     * nodeChanged方法对一个指定节点进行监听，会在以下情况下被调用：
+     * 1 节点数据发生变化：
+     * 当节点数据被更新时，nodeChanged 方法会被调用。
+     * 您可以通过 client.getData().forPath 方法获取最新的节点数据。
+     * 2 节点被删除：
+     * 当节点被删除时，nodeChanged 方法同样会被调用。
+     * 在这种情况下，您将无法通过 client.getData().forPath 获取节点数据，因为节点已经不存在。
+     *
      * [zk: localhost:2181(CONNECTED) 19] set /clothes pants
-     * [zk: localhost:2181(CONNECTED) 20]
      * [zk: localhost:2181(CONNECTED) 20] set /clothes shoes
      * [zk: localhost:2181(CONNECTED) 24] delete /clothes
      *
@@ -59,60 +61,88 @@ public class ListenerWithCurator {
 
     /**
      * PathChildrenCache: 对指定路径节点的一级子目录监听，不对该节点的操作监听，对其子目录的增删改操作监听
+     * PathChildrenCache 主要用于监听指定路径下的 直接子节点(不能递归监听) 变化，可以分别监听子节点的添加、删除和数据更新。
+     *
+     * 调用时机:
+     * 1 初始化完成 (INITIALIZED)：
+     * 当 PathChildrenCache 启动并且已经从 ZooKeeper 获取了所有初始数据时，PathChildrenCacheEvent 的 INITIALIZED 类型事件会被触发。
+     *
+     * 2 子节点添加 (CHILD_ADDED)：
+     * 当一个新的子节点被添加到监听的路径下时，PathChildrenCacheEvent 的 CHILD_ADDED 类型事件会被触发。
+     *
+     * 3 子节点更新 (CHILD_UPDATED)：
+     * 当已存在的子节点的数据被更新时，PathChildrenCacheEvent 的 CHILD_UPDATED 类型事件会被触发。
+     *
+     * 4 子节点删除 (CHILD_REMOVED)：
+     * 当一个已存在的子节点被删除时，PathChildrenCacheEvent 的 CHILD_REMOVED 类型事件会被触发。
+     *
+     * 监听/sports下的直接子节点的添加、删除和数据更新。
+     * [zk: localhost:2181(CONNECTED) 5] create /sports
+     * [zk: localhost:2181(CONNECTED) 7] create /sports/football
+     * [zk: localhost:2181(CONNECTED) 8] create /sports/basketball
+     * [zk: localhost:2181(CONNECTED) 18] delete /sports/football
+     * [zk: localhost:2181(CONNECTED) 19] set /sports/basketball nba
+     * [zk: localhost:2181(CONNECTED) 20] set /sports/basketball cba
+     *
+     * 不能监听/sports下的二级子节点
+     * [zk: localhost:2181(CONNECTED) 10] create /sports/football/club
      * @throws Exception
      */
     @Test
-    public void testPathChildrenCache() throws Exception {
-        // 参数  客户端，路径 ，缓存数据，是否压缩，线程池
-        PathChildrenCache pathChildrenCache = new PathChildrenCache(client,"/clothes",false);
-        //绑定监听器
-        pathChildrenCache.getListenable().addListener(new PathChildrenCacheListener() {
+    public void testpathChildrenCacheWatch() throws Exception {
+        PathChildrenCache cache = new PathChildrenCache(client, "/sports", true);
+
+        cache.getListenable().addListener(new PathChildrenCacheListener() {
             @Override
-            public void childEvent(CuratorFramework curatorFramework, PathChildrenCacheEvent pathChildrenCacheEvent) throws Exception {
-                System.out.println("子节点变化了");
-                System.out.println(pathChildrenCacheEvent);
-                //监听子节点的变更,并且拿到变更后的数据
-                PathChildrenCacheEvent.Type type = pathChildrenCacheEvent.getType();
-                //判断类型是否是update
-                if(type.equals(PathChildrenCacheEvent.Type.CHILD_UPDATED)){
-                    System.out.println("=============");
-                    //拿到数据
-                    byte[] data = pathChildrenCacheEvent.getData().getData();
-                    System.out.println("xxxxx"+new String(data,StandardCharsets.UTF_8));
+            public void childEvent(CuratorFramework client, PathChildrenCacheEvent event)  {
+                switch (event.getType()) {
+                    case CHILD_ADDED:
+                        System.out.println("CHILD_ADDED: " + event.getData().getPath());
+                        break;
+                    case CHILD_UPDATED:
+                        System.out.println("CHILD_UPDATED: " + event.getData().getPath());
+                        break;
+                    case CHILD_REMOVED:
+                        System.out.println("CHILD_REMOVED: " + event.getData().getPath());
+                        break;
+                    case INITIALIZED:
+                        System.out.println("INITIALIZED");
+                        break;
+                    default:
+                        break;
                 }
+
             }
         });
-        //开启监听
-        pathChildrenCache.start();
-        System.in.read();
+
+        cache.start(PathChildrenCache.StartMode.NORMAL);
+        System.in.read(); // 等待用户输入，以便保持监听运行
     }
 
 
 
-
     /**
-     * TreeCache：对整个目录或者所有的节点进行监听，可以设置监听深度
-     * <p>
-     * [zk: localhost:2181(CONNECTED) 12] create /clothes/pants Ling
-     * Created /clothes/pants
-     * [zk: localhost:2181(CONNECTED) 13] set /clothes/pants Nike
-     * [zk: localhost:2181(CONNECTED) 14]
-     * [zk: localhost:2181(CONNECTED) 14] set /clothes/pants playboy
-     * [zk: localhost:2181(CONNECTED) 15] delete /clothes/pants
-     * <p>
-     * 控制台输出：
-     * /clothes节点添加/clothes/pants	添加数据为：Ling
-     * /clothes/pants节点数据更新	更新数据为：Nike	版本为：1
-     * /clothes/pants节点数据更新	更新数据为：playboy	版本为：2
-     * /clothes/pants节点被删除
-     * <p>
-     * 测试发现：只是创建节点，但是不set数据，listener没有输出
+     * TreeCache 主要用于监听整个子树的变化(可以设置监听深度)，包括节点的添加、删除以及数据的更新。它会自动维护一个本地缓存来反映 ZooKeeper 中的数据结构。
+     * 调用时机
+     * 1 初始化完成 (INITIALIZED)：
+     * 当 TreeCache 启动并且已经从 ZooKeeper 获取了所有初始数据时，TreeCacheEvent 的 INITIALIZED 类型事件会被触发。
+     * 2 节点添加 (NODE_ADDED)：
+     * 当一个新节点被添加到监听的路径下时，TreeCacheEvent 的 NODE_ADDED 类型事件会被触发。
+     * 3 节点更新 (NODE_UPDATED)：
+     * 当已存在的节点的数据被更新时，TreeCacheEvent 的 NODE_UPDATED 类型事件会被触发。
+     * 4 节点删除 (NODE_REMOVED)：
+     * 当一个已存在的节点被删除时，TreeCacheEvent 的 NODE_REMOVED 类型事件会被触发。
      *
+     * TreeCache和PathChildrenCache监听范围：
+     * TreeCache 监听的是整个子树，包括根节点及其所有子节点。
+     * PathChildrenCache 只监听指定路径下的直接子节点。
+     *
+     * [zk: localhost:2181(CONNECTED) 18] create /sports/football/club
      * @throws Exception
      */
     @Test
     public void treeCacheWatch() throws Exception {
-        TreeCache treeCache = new TreeCache(client, "/clothes");
+        TreeCache treeCache = new TreeCache(client, "/sports");
 
         treeCache.getListenable().addListener(new TreeCacheListener() {
             @Override
@@ -120,7 +150,7 @@ public class ListenerWithCurator {
                 ChildData eventData = event.getData();
                 switch (event.getType()) {
                     case NODE_ADDED:
-                        System.out.println("/clothes节点添加" + eventData.getPath() + "\t添加数据为：" + new String(eventData.getData()));
+                        System.out.println("/sports节点添加" + eventData.getPath());
                         break;
                     case NODE_UPDATED:
                         System.out.println(eventData.getPath() + "节点数据更新\t更新数据为：" + new String(eventData.getData()) + "\t版本为：" + eventData.getStat().getVersion());
